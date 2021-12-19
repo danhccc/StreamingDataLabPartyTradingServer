@@ -14,6 +14,7 @@ public class NetworkedServer : MonoBehaviour
     int hostID;
     int socketPort = 5491;
 
+    [SerializeField]
     LinkedList<SharingRoom> sharingRooms;
 
     // Start is called before the first frame update
@@ -56,6 +57,7 @@ public class NetworkedServer : MonoBehaviour
                 break;
             case NetworkEventType.DisconnectEvent:
                 Debug.Log("Disconnection, " + recConnectionID);
+                PlayerDisconnected(recConnectionID);
                 break;
         }
 
@@ -68,6 +70,7 @@ public class NetworkedServer : MonoBehaviour
         NetworkTransport.Send(hostID, id, reliableChannelID, buffer, msg.Length * sizeof(char), out error);
     }
 
+
     private void ProcessRecievedMsg(string msg, int id)
     {
         Debug.Log("msg recieved = " + msg + ".  connection id = " + id);
@@ -75,25 +78,22 @@ public class NetworkedServer : MonoBehaviour
         string[] csv = msg.Split(',');
 
         int signifier = int.Parse(csv[0]);
-
         if (signifier == ClientToServerSignifier.JoinSharingRoom)
         {
             string roomToJoinName = csv[1];
-
+            // bool hasBeenFound = false;
             SharingRoom foundSharingRoom = null;
-
-            foreach(SharingRoom sr in sharingRooms)
+            foreach (SharingRoom sr in sharingRooms)
             {
                 if (sr.name == roomToJoinName)
                 {
-                    
+                    // hasBeenFound = true;
                     foundSharingRoom = sr;
-                    sr.connectionIDs.AddLast(id);
                     Debug.Log("Added to sharing room");
-                    
                     break;
                 }
             }
+
             if (foundSharingRoom == null)
             {
                 foundSharingRoom = new SharingRoom();
@@ -101,20 +101,93 @@ public class NetworkedServer : MonoBehaviour
                 sharingRooms.AddLast(foundSharingRoom);
                 Debug.Log("Created sharing room");
             }
-            
-            foundSharingRoom.connectionIDs.AddLast(id);
+
+            if (!foundSharingRoom.connectionIDs.Contains(id))
+            {
+                foundSharingRoom.connectionIDs.AddLast(id);
+            }
+            else
+            {
+                Debug.Log("Preventing duplicate in sharing room");
+            }
+
         }
+        else if (signifier == ClientToServerSignifier.PartyDataTransferStart)
+        {
+            SharingRoom sr = FindSharingRoomWithConnectionID(id);
+            sr.transferData = new LinkedList<string>();
+        }
+        else if (signifier == ClientToServerSignifier.PartyDataTransfer)
+        {
+            SharingRoom sr = FindSharingRoomWithConnectionID(id);
+            sr.transferData.AddLast(msg);
+        }
+        else if (signifier == ClientToServerSignifier.PartyDataTransferEnd)
+        {
+            SharingRoom sr = FindSharingRoomWithConnectionID(id);
+            foreach (int pID in sr.connectionIDs)
+            {
+                if (pID == id)
+                    continue;
+                SendMessageToClient(ServerToClientSignifier.PartyDataTransferStart + "", pID);
+                foreach (string d in sr.transferData)
+                    SendMessageToClient(d, pID);
+                SendMessageToClient(ServerToClientSignifier.PartyDataTransferEnd + "", pID);
+            }
+        }
+    }
+
+
+    public void PlayerDisconnected(int id)  // This is working
+    {
+        SharingRoom foundSR = null;
+
         
+
+        if (foundSR != null)
+        {
+            foundSR.connectionIDs.Remove(id);
+
+            Debug.Log("removing player from room");
+
+            if (foundSR.connectionIDs.Count == 0)
+            {
+                sharingRooms.Remove(foundSR);
+
+                Debug.Log("removing room from list");
+            }
+        }
+
+
+       
+    }
+
+    public SharingRoom FindSharingRoomWithConnectionID(int id)
+    {
+        foreach (SharingRoom sr in sharingRooms)
+        {
+            foreach (int pID in sr.connectionIDs)
+            {
+                if (pID == id)
+                {
+                    return sr;
+                }
+            }
+        }
+
+        return null;
     }
 
 }
 
-
+// [System.Serializable]
 public class SharingRoom
 {
     public string name;
 
     public LinkedList<int> connectionIDs;
+
+    public LinkedList<string> transferData;
 
     public SharingRoom()
     {
@@ -126,9 +199,14 @@ public class SharingRoom
 static public class ClientToServerSignifier
 {
     public const int JoinSharingRoom = 1;
+    public const int PartyDataTransferStart = 101;
+    public const int PartyDataTransfer = 102;
+    public const int PartyDataTransferEnd = 103;
 }
 
 static public class ServerToClientSignifier
 {
-
+    public const int PartyDataTransferStart = 101;
+    public const int PartyDataTransfer = 102;
+    public const int PartyDataTransferEnd = 103;
 }
